@@ -3,6 +3,9 @@
 import os
 import math
 import random
+import time
+
+import numpy as np
 
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -61,6 +64,116 @@ class Dense_Attention_Block(tf.keras.Model):
 
 
 #---------- Models ----------
+
+class Hard_Coded_Selection_Net(tf.keras.Model):
+	def __init__(self, n):
+		super(Hard_Coded_Selection_Net, self).__init__()
+		
+		#rank
+		self.Q1 = tf.ones([n,])
+		self.Qb1 = tf.zeros([n,])
+		self.R1 = tf.zeros([n,])
+		self.Rb1 = tf.range(0.,n,1)
+		s1 = np.zeros((n,))
+		s1.fill(-1.)
+		s1[0] = -1.
+		self.S1 = tf.convert_to_tensor(s1)
+		self.e1 = 1.
+		
+		#order
+		self.Q3 = tf.ones([n,])
+		self.Qb3 = tf.zeros([n,])
+		self.R3 = tf.zeros([n,])
+		self.Rb3 = tf.zeros([n,])
+		s3 = np.zeros((n,))
+		s3.fill(-1.)
+		s3[0] = -1.
+		self.S3 = tf.convert_to_tensor(s1)
+		self.e3 = 0.
+		self.Eb3 = tf.range(0.,n,1)
+		
+		
+		#select tf.range(0.,n,1)
+		q2 = np.zeros((2,n))
+		q2[1] = 1.
+		self.Q2 = tf.cast(tf.convert_to_tensor(q2), tf.float32)
+		self.Qb2 = tf.zeros([n,])
+		r2 = np.zeros((2,n))
+		r2[0] = 1.
+		self.R2 = tf.cast(tf.convert_to_tensor(r2), tf.float32)
+		self.Rb2 = tf.zeros([n,])
+		s2 = np.zeros((n,))
+		s2.fill(0.)
+		s2[0] = 1.
+		self.S2 = tf.convert_to_tensor(s2)
+		self.e2 = 0.
+		
+		#tf.print("self.Q1:", self.Q1)
+		#tf.print("self.Qb1:", self.Qb1)
+		#tf.print("self.R1:", self.R1)
+		#tf.print("self.Rb1:", self.Rb1)
+		#tf.print("self.S1:", self.S1)
+		
+		#tf.print("self.Q2:", self.Q2)
+		#tf.print("self.Qb2:", self.Qb2)
+		#tf.print("self.R2:", self.R2)
+		#tf.print("self.Rb2:", self.Rb2)
+		#tf.print("self.S2:", self.S2)
+		
+	def call(self, X):
+		
+		X = X[0]
+		
+		#rank
+		Z1 = tf.math.add(self.Q1 * X, self.Qb1)
+		P1 = tf.math.add(self.R1 * X, self.Rb1)
+		Y_1 = []
+		for i in range(n):
+			SP1 = tf.roll(self.S1, shift=tf.cast(P1[i], tf.int32), axis=0)
+			Y_int1 = tf.math.add(tf.cast(SP1, tf.float32) * Z1, Z1[i] * self.e1)
+			Y_act1 = tf.math.sign(tf.nn.relu(Y_int1))
+			Y_1.append(tf.math.reduce_sum(Y_act1))
+		Y_1 = tf.convert_to_tensor(Y_1)
+		
+		#tf.print("\nrank:", Y_1)
+		
+		#order
+		Z3 = tf.math.add(self.Q3 * Y_1, self.Qb3)
+		P3 = tf.math.add(self.R3 * Y_1, self.Rb3)
+		Y_3 = []
+		for i in range(n):
+			SP3 = tf.roll(self.S3, shift=tf.cast(P3[i], tf.int32), axis=0)
+			Y_int3 = tf.math.add(tf.cast(SP3, tf.float32) * Z3, Z3[i] * self.e3 + self.Eb3[i])
+			Y_act3 = (tf.math.abs(tf.math.sign(Y_int3)) * (-1) + 1) * self.Eb3
+			Y_3.append(tf.math.reduce_sum(Y_act3))
+		Y_3 = tf.convert_to_tensor(Y_3)
+		
+		#tf.print("\norder:", Y_3)
+		
+		#select
+		X_2 = tf.concat([[Y_3], [X]], 0)
+		Z2 = tf.math.add(tf.math.reduce_sum(self.Q2 * X_2, axis=0), self.Qb2)
+		P2 = tf.math.add(tf.math.reduce_sum(self.R2 * X_2, axis=0), self.Rb2)
+		Y_2 = []
+		for i in range(n):
+			SP2 = tf.roll(self.S2, shift=tf.cast(P2[i], tf.int32), axis=0)
+			Y_int2 = tf.math.add(tf.cast(SP2, tf.float32) * Z2, Z2[i] * self.e2)
+			Y_act2 = Y_int2
+			Y_2.append(tf.math.reduce_sum(Y_act2))
+		Y_2 = tf.convert_to_tensor(Y_2)
+		
+		#tf.print("\nsorted:", Y_2)
+		
+		return Y_2
+		
+"""
+	97	5	42	82	59
+0	0	1	1	1	1
+1	0	0	0	0	0
+2	0	1	0	0	0
+3	0	1	1	0	1
+4	0	1	1	0	0
+"""	
 
 class Dense_Net(tf.keras.Model): 
 	def __init__(self):
@@ -129,10 +242,10 @@ def train_step(n, sample_function):
 #---------- Tests ----------
 
 # set parameters
-n = 5				# length of the sequence to be sorted
+n = 10000			# length of the sequence to be sorted
 
 min_val = 0			# minimum value for the list
-max_val = 100		# maximum value for the list
+max_val = 1000000		# maximum value for the list
 
 epochs = 100
 epoch_size = 10000000
@@ -144,6 +257,8 @@ model_type = 2
 #n_fact = math.factorial(n)
 #for i in range(n_fact):
 #	print(permutation(i,range(n)))
+	
+"""
 	
 loss_obj = tf.keras.losses.Huber()
 optimizer = tf.keras.optimizers.SGD(learning_rate=l_rate)
@@ -173,6 +288,7 @@ except:
 
 sample_function = sort_sampling
 
+
 print("training model...")
 
 for i in range(epochs):
@@ -184,8 +300,27 @@ for i in range(epochs):
 	X, Y = sample_function(n, min_val, max_val, 1)
 	Y_ = model(X)
 	tf.print("X:", X, "\tY:", Y, "\tY_:", Y_)
+"""
+
+model = Hard_Coded_Selection_Net(n)
+sample_function = sort_sampling
 	
+print("testing model...")
+
+python_time = 0
+tensor_time = 0
+
+for i in range(10):
+	start_time = time.time()
+	X, Y = sample_function(n, min_val, max_val, 1)
+	python_time +=  time.time() - start_time
+	start_time = time.time()
+	Y_ = model(X)
+	tensor_time +=  time.time() - start_time
+	tf.print("X:", X, "\tY:", Y, "\tY_:", Y_)
 	
+print("python_time: ", python_time)
+print("tensor_time: ", tensor_time)
 	
 	
 	
